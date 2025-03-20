@@ -22,54 +22,11 @@ use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::str::FromStr;
+
 use crate::error::_config_err;
 use crate::parsers::CompressionTypeVariant;
 use crate::utils::get_available_parallelism;
 use crate::{DataFusionError, Result};
-
-use serde::{Deserialize, Serialize};
-use hex;
-#[cfg(feature = "parquet")]
-use parquet::encryption::encrypt::{EncryptionKey, FileEncryptionProperties};
-#[cfg(feature = "parquet")]
-use parquet::encryption::decryption::FileDecryptionProperties;
-
-#[derive(Serialize, Deserialize)]
-pub struct EncryptionColumnKeys {
-    pub column_keys_as_hex: HashMap<String, String>,
-}
-
-impl EncryptionColumnKeys {
-    pub fn new(column_keys: &HashMap<String, Vec<u8>>) -> Self {
-        let mut column_keys_as_hex: HashMap<String, String> = HashMap::new();
-
-        for (key, value) in column_keys.iter() {
-            column_keys_as_hex.insert(hex::encode(key.clone()), hex::encode(value.clone()));
-        }
-
-        EncryptionColumnKeys {column_keys_as_hex}
-    }
-
-    pub fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap()
-    }
-
-    pub fn from_json_to_column_keys(s: &String) -> HashMap<String, Vec<u8>> {
-        let eck: EncryptionColumnKeys = serde_json::from_str(s).expect("failed to decode column keys from JSON");
-        let mut hm: HashMap<String, Vec<u8>> = HashMap::new();
-        for (key, val) in eck.column_keys_as_hex {
-            let col = String::from_utf8(hex::decode(key).expect("Invalid column name")).expect("Invalid column name");
-            let key = hex::decode(val).expect("Invalid column key");
-            hm.insert(col, key);
-        }
-        hm
-    }
-}
-
-// Just GRRR, at the rust compiler.
-// I can't seem to figure out how to import parquet here
-// use parquet::encryption::decryption::FileDecryptionProperties;
-
 
 /// A macro that wraps a configuration struct and automatically derives
 /// [`Default`] and [`ConfigField`] for it, allowing it to be used
@@ -223,107 +180,6 @@ macro_rules! config_namespace {
         }
     }
 }
-
-config_namespace! {
-    pub struct ConfigFileDecryptionProperties {
-        pub footer_key_as_hex: String, default = String::new()
-        pub column_keys_as_json_hex: String, default = String::new()
-        pub aad_prefix_as_hex: String, default = String::new()
-    }
-}
-
-#[cfg(feature = "parquet")]
-impl Into<FileDecryptionProperties> for ConfigFileDecryptionProperties {
-    fn into(self) -> FileDecryptionProperties {
-        let eck = EncryptionColumnKeys::from_json_to_column_keys(&self.column_keys_as_json_hex);
-        let mut column_keys: Option<HashMap<Vec<u8>, Vec<u8>>> = None;
-        if !eck.is_empty() {
-            let mut ck: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
-            for (key, val) in eck.iter() {
-                ck.insert(key.clone().into_bytes(), val.clone());
-            }
-            column_keys = Some(ck);
-        }
-        let mut aad_prefix: Option<Vec<u8>> = None;
-        if self.aad_prefix_as_hex.len() > 0 {
-            aad_prefix = Some(hex::decode(&self.aad_prefix_as_hex).expect("Invalid AAD prefix"));
-        }
-
-        let fep = FileDecryptionProperties{
-            footer_key: hex::decode(self.footer_key_as_hex).unwrap(),
-            column_keys,
-            aad_prefix,
-        };
-        fep
-    }
-}
-
-#[cfg(feature = "parquet")]
-impl From<FileDecryptionProperties> for ConfigFileDecryptionProperties {
-    fn from(f: FileDecryptionProperties) -> Self {
-        let mut column_keys: HashMap<String, Vec<u8>> = HashMap::new();
-        if f.column_keys.is_some() {
-            column_keys = f.column_keys.unwrap().into_iter().map(|(k, v)| (String::from_utf8(k).unwrap(), v.clone())).collect();
-        }
-
-        let ck = EncryptionColumnKeys::new(&column_keys);
-        ConfigFileDecryptionProperties {
-            footer_key_as_hex: hex::encode(f.footer_key),
-            column_keys_as_json_hex: ck.to_json(),
-            aad_prefix_as_hex: hex::encode(f.aad_prefix.unwrap_or_default()),
-        }
-    }
-}
-
-config_namespace! {
-    pub struct ConfigFileEncryptionProperties {
-        pub encrypt_footer: bool, default = false
-        pub footer_key_as_hex: String, default = String::new()
-        pub column_keys_as_json_hex: String, default = String::new()
-        pub aad_prefix_as_hex: String, default = String::new()
-    }
-}
-
-#[cfg(feature = "parquet")]
-impl Into<FileEncryptionProperties> for ConfigFileEncryptionProperties {
-    fn into(self) -> FileEncryptionProperties {
-        let eck = EncryptionColumnKeys::from_json_to_column_keys(&self.column_keys_as_json_hex);
-        let mut column_keys: HashMap<String, EncryptionKey> = HashMap::new();
-        if !eck.is_empty() {
-            for (key, val) in eck.iter() {
-                column_keys.insert(key.clone(), EncryptionKey::new(val.clone()));
-            }
-        }
-        let mut aad_prefix: Option<Vec<u8>> = None;
-        if self.aad_prefix_as_hex.len() > 0 {
-            aad_prefix = Some(hex::decode(&self.aad_prefix_as_hex).expect("Invalid AAD prefix"));
-        }
-        let fep = FileEncryptionProperties{
-            encrypt_footer: self.encrypt_footer,
-            footer_key: EncryptionKey::new(hex::decode(self.footer_key_as_hex).unwrap()),
-            column_keys: column_keys,
-            aad_prefix,
-            store_aad_prefix: true,
-        };
-        fep
-    }
-}
-
-#[cfg(feature = "parquet")]
-impl From<FileEncryptionProperties> for ConfigFileEncryptionProperties {
-    fn from(f: FileEncryptionProperties) -> Self {
-        let column_keys: HashMap<String, Vec<u8>> =
-            f.column_keys.into_iter().map(|(k, v)| (k, v.key().clone())).collect();
-        let ck = EncryptionColumnKeys::new(&column_keys);
-        ConfigFileEncryptionProperties {
-            encrypt_footer: f.encrypt_footer,
-            footer_key_as_hex: hex::encode(f.footer_key.key()),
-            column_keys_as_json_hex: ck.to_json(),
-            aad_prefix_as_hex: hex::encode(f.aad_prefix.unwrap_or_default()),
-        }
-    }
-}
-
 
 config_namespace! {
     /// Options related to catalog and directory scanning
@@ -711,10 +567,6 @@ config_namespace! {
         /// writing out already in-memory data, such as from a cached
         /// data frame.
         pub maximum_buffered_record_batches_per_stream: usize, default = 2
-
-        // Optional encryption settings
-        pub file_decryption_properties: Option<ConfigFileDecryptionProperties>, default = None
-        pub file_encryption_properties: Option<ConfigFileEncryptionProperties>, default = None
     }
 }
 

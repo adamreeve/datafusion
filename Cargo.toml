@@ -103,7 +103,6 @@ parquet = { path = "../arrow-rs/parquet", default-features = false, features = [
     "arrow",
     "async",
     "object_store",
-    "encryption",
 ] }
 
 async-trait = "0.1.73"
