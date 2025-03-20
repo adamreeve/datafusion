@@ -28,7 +28,7 @@ use parquet::file::metadata::ParquetMetaData;
 use std::fmt::Debug;
 use std::ops::Range;
 use std::sync::Arc;
-
+use parquet::arrow::arrow_reader::ArrowReaderOptions;
 use crate::ParquetFileMetrics;
 
 /// Interface for reading parquet files.
@@ -118,6 +118,14 @@ impl AsyncFileReader for ParquetFileReader {
         &mut self,
     ) -> BoxFuture<'_, parquet::errors::Result<Arc<ParquetMetaData>>> {
         self.inner.get_metadata()
+    }
+
+    fn get_metadata_with_options<'a>(
+        &'a mut self,
+        options: &'a ArrowReaderOptions,
+    ) -> BoxFuture<'a, parquet::errors::Result<Arc<ParquetMetaData>>> {
+        let _ = options;
+        self.inner.get_metadata_with_options(options)
     }
 }
 
