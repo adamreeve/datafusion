@@ -95,6 +95,8 @@ impl TryFrom<&TableParquetOptions> for WriterPropertiesBuilder {
             global,
             column_specific_options,
             key_value_metadata,
+            writer_configuration,
+            read_configuration: _,
         } = table_parquet_options;
 
         let mut builder = global.into_writer_properties_builder()?;
@@ -167,6 +169,10 @@ impl TryFrom<&TableParquetOptions> for WriterPropertiesBuilder {
                     builder.set_column_max_statistics_size(path, max_statistics_size)
                 }
             }
+        }
+
+        if let Some(config) = writer_configuration {
+            builder = config(builder);
         }
 
         Ok(builder)
@@ -625,6 +631,8 @@ mod tests {
             },
             column_specific_options,
             key_value_metadata,
+            writer_configuration: None,
+            read_configuration: None,
         }
     }
 
@@ -679,6 +687,8 @@ mod tests {
             )]
             .into(),
             key_value_metadata: [(key, value)].into(),
+            writer_configuration: None,
+            read_configuration: None,
         };
 
         let writer_props = WriterPropertiesBuilder::try_from(&table_parquet_opts)

@@ -499,6 +499,7 @@ impl FileSource for ParquetSource {
             enable_page_index: self.enable_page_index(),
             enable_bloom_filter: self.bloom_filter_on_read(),
             schema_adapter_factory,
+            read_configuration: self.table_parquet_options.read_configuration.clone(),
         })
     }
 

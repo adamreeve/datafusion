@@ -551,30 +551,30 @@ impl From<ParquetColumnOptionsProto> for ParquetColumnOptions {
 
 impl From<&TableParquetOptionsProto> for TableParquetOptions {
     fn from(proto: &TableParquetOptionsProto) -> Self {
-        TableParquetOptions {
-            global: proto
-                .global
-                .as_ref()
-                .map(ParquetOptions::from)
-                .unwrap_or_default(),
-            column_specific_options: proto
-                .column_specific_options
-                .iter()
-                .map(|parquet_column_options| {
-                    (
-                        parquet_column_options.column_name.clone(),
-                        ParquetColumnOptions::from(
-                            parquet_column_options.options.clone().unwrap_or_default(),
-                        ),
-                    )
-                })
-                .collect(),
-            key_value_metadata: proto
-                .key_value_metadata
-                .iter()
-                .map(|(k, v)| (k.clone(), Some(v.clone())))
-                .collect(),
-        }
+        let mut options = TableParquetOptions::new();
+        options.global = proto
+            .global
+            .as_ref()
+            .map(ParquetOptions::from)
+            .unwrap_or_default();
+        options.column_specific_options = proto
+            .column_specific_options
+            .iter()
+            .map(|parquet_column_options| {
+                (
+                    parquet_column_options.column_name.clone(),
+                    ParquetColumnOptions::from(
+                        parquet_column_options.options.clone().unwrap_or_default(),
+                    ),
+                )
+            })
+            .collect();
+        options.key_value_metadata  = proto
+            .key_value_metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), Some(v.clone())))
+            .collect();
+        options
     }
 }
 

@@ -1054,16 +1054,13 @@ impl TryFrom<&protobuf::TableParquetOptions> for TableParquetOptions {
                 column_specific_options.insert(column_name.clone(), options.try_into()?);
             }
         }
-        Ok(TableParquetOptions {
-            global: value
-                .global
-                .as_ref()
-                .map(|v| v.try_into())
-                .unwrap()
-                .unwrap(),
-            column_specific_options,
-            key_value_metadata: Default::default(),
-        })
+        let mut options = TableParquetOptions::new();
+        options.global = value
+            .global
+            .as_ref()
+            .map(|v| v.try_into()).unwrap()?;
+        options.column_specific_options = column_specific_options;
+        Ok(options)
     }
 }
 

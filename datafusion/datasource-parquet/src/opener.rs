@@ -83,6 +83,8 @@ pub(super) struct ParquetOpener {
     pub enable_bloom_filter: bool,
     /// Schema adapter factory
     pub schema_adapter_factory: Arc<dyn SchemaAdapterFactory>,
+    /// Callback to modify the Parquet ArrowReaderOptions with custom configuration
+    pub read_configuration: Option<Arc<dyn Fn(ArrowReaderOptions) -> ArrowReaderOptions + Sync + Send>>,
 }
 
 impl FileOpener for ParquetOpener {
@@ -122,9 +124,14 @@ impl FileOpener for ParquetOpener {
         );
         let enable_bloom_filter = self.enable_bloom_filter;
         let limit = self.limit;
+        let read_configuration = self.read_configuration.clone();
 
         Ok(Box::pin(async move {
-            let options = ArrowReaderOptions::new().with_page_index(enable_page_index);
+            let mut options = ArrowReaderOptions::new().with_page_index(enable_page_index);
+
+            if let Some(config) = &read_configuration {
+                options = config(options);
+            }
 
             let mut metadata_timer = file_metrics.metadata_load_time.timer();
             let metadata =

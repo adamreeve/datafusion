@@ -22,7 +22,12 @@ use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::str::FromStr;
-
+#[cfg(feature = "parquet")]
+use std::sync::Arc;
+#[cfg(feature = "parquet")]
+use parquet::arrow::arrow_reader::ArrowReaderOptions;
+#[cfg(feature = "parquet")]
+use parquet::file::properties::WriterPropertiesBuilder;
 use crate::error::_config_err;
 use crate::parsers::CompressionTypeVariant;
 use crate::utils::get_available_parallelism;
@@ -1594,7 +1599,7 @@ impl TableOptions {
 /// Closely tied to [`ParquetWriterOptions`](crate::file_options::parquet_writer::ParquetWriterOptions).
 /// Properties not included in [`TableParquetOptions`] may not be configurable at the external API
 /// (e.g. sorting_columns).
-#[derive(Clone, Default, Debug, PartialEq)]
+#[derive(Clone, Default)]
 pub struct TableParquetOptions {
     /// Global Parquet options that propagates to all columns.
     pub global: ParquetOptions,
@@ -1615,6 +1620,30 @@ pub struct TableParquetOptions {
     /// )
     /// ```
     pub key_value_metadata: HashMap<String, Option<String>>,
+    /// Callback to modify the Parquet WriterPropertiesBuilder with custom configuration
+    #[cfg(feature = "parquet")]
+    pub writer_configuration: Option<Arc<dyn Fn(WriterPropertiesBuilder) -> WriterPropertiesBuilder + Sync + Send>>,
+    /// Callback to modify the Parquet ArrowReaderOptions with custom configuration
+    #[cfg(feature = "parquet")]
+    pub read_configuration: Option<Arc<dyn Fn(ArrowReaderOptions) -> ArrowReaderOptions + Sync + Send>>,
+}
+
+impl fmt::Debug for TableParquetOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TableParquetOptions")
+            .field("global", &self.global)
+            .field("column_specific_options", &self.column_specific_options)
+            .field("key_value_metadata", &self.key_value_metadata)
+            .finish()
+    }
+}
+
+impl PartialEq for TableParquetOptions {
+    fn eq(&self, other: &Self) -> bool {
+        self.global == other.global &&
+            self.column_specific_options == other.column_specific_options &&
+            self.key_value_metadata == other.key_value_metadata
+    }
 }
 
 impl TableParquetOptions {

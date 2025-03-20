@@ -75,6 +75,8 @@ tokio = { workspace = true, features = ["rt-multi-thread", "parking_lot"] }
 tonic = "0.12.1"
 url = { workspace = true }
 uuid = "1.15"
+# Add encryption feature for example using Parquet encryption
+parquet = { workspace = true, features = ["encryption"] }
 
 [target.'cfg(not(target_os = "windows"))'.dev-dependencies]
 nix = { version = "0.29.0", features = ["fs"] }
