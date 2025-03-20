@@ -35,17 +35,17 @@ use datafusion::physical_plan::execute_stream;
 
 #[tokio::main]
 async fn main() -> datafusion::common::Result<()> {
+    let tmpdir = TempDir::new()?;
     println!("Test writing");
-    write_encrypted().await?;
+    write_encrypted(&tmpdir).await?;
     println!("Test reading");
-    read_encrypted().await?;
+    read_encrypted(&tmpdir).await?;
     Ok(())
 }
 
-async fn write_encrypted() -> datafusion::common::Result<()> {
+async fn write_encrypted(tmpdir: &TempDir) -> datafusion::common::Result<()> {
     // Write an encrypted file
     let ctx = SessionContext::new();
-    let tmpdir = TempDir::new()?;
 
     let a: ArrayRef = Arc::new(StringArray::from(vec!["a", "b", "c", "d"]));
     let b: ArrayRef = Arc::new(Int32Array::from(vec![1, 10, 10, 100]));
@@ -70,12 +70,9 @@ async fn write_encrypted() -> datafusion::common::Result<()> {
     Ok(())
 }
 
-async fn read_encrypted() -> datafusion::common::Result<()> {
+async fn read_encrypted(tmpdir: &TempDir) -> datafusion::common::Result<()> {
     // Read an encrypted file from the parquet-testing repository
     let ctx = SessionContext::new();
-    let tmpdir = TempDir::new()?;
-
-    let test_data = datafusion::test_util::parquet_test_data();
 
     // Configure listing options
     let mut parquet_options = TableParquetOptions::new();
@@ -83,13 +80,8 @@ async fn read_encrypted() -> datafusion::common::Result<()> {
     let file_format = ParquetFormat::default().with_options(parquet_options).with_enable_pruning(true);
     let listing_options = ListingOptions::new(Arc::new(file_format));
 
-    // Parquet file extension needs to be .parquet, so copy the example file and rename it:
-    let orig_table_path = format!("{test_data}/uniform_encryption.parquet.encrypted");
-    let table_path = tmpdir.path().join("uniform_encryption.parquet");
-    std::fs::copy(&orig_table_path, &table_path)?;
-
-    let table_path = table_path.into_os_string().into_string().unwrap();
-    let table_path = format!("file://{}", table_path);
+    let file_name = std::fs::read_dir(tmpdir)?.next().unwrap()?;
+    let table_path = format!("file://{}", file_name.path().as_os_str().to_str().unwrap());
 
     let _ = ctx
         .register_listing_table(
