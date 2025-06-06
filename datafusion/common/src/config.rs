@@ -477,9 +477,9 @@ impl Into<FileDecryptionProperties> for ConfigFileDecryptionProperties {
         .with_column_keys(column_names, column_keys)
         .unwrap();
 
-        if !self.footer_signature_verification {
-            fep = fep.disable_footer_signature_verification();
-        }
+        //if !self.footer_signature_verification {
+        //    fep = fep.disable_footer_signature_verification();
+        //}
 
         if self.aad_prefix_as_hex.len() > 0 {
             let aad_prefix =
@@ -510,7 +510,7 @@ impl From<&FileDecryptionProperties> for ConfigFileDecryptionProperties {
             ),
             column_keys_as_hex,
             aad_prefix_as_hex: hex::encode(aad_prefix),
-            footer_signature_verification: f.check_plaintext_footer_integrity(),
+            footer_signature_verification: false, //f.check_plaintext_footer_integrity(),
         }
     }
 }
