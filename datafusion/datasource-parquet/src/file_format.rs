@@ -38,7 +38,7 @@ use datafusion_datasource::write::demux::DemuxedStreamReceiver;
 
 use arrow::compute::sum;
 use arrow::datatypes::{DataType, Field, FieldRef};
-use datafusion_common::config::{ConfigField, ConfigFileType, TableParquetOptions};
+use datafusion_common::config::{ConfigField, ConfigFileType, Extensions, TableParquetOptions};
 use datafusion_common::parsers::CompressionTypeVariant;
 use datafusion_common::stats::Precision;
 use datafusion_common::{
@@ -141,7 +141,7 @@ impl FileFormatFactory for ParquetFormatFactory {
         };
 
         Ok(Arc::new(
-            ParquetFormat::default().with_options(parquet_options),
+            ParquetFormat::default().with_options(parquet_options).with_extensions(state.table_options().extensions.clone()),
         ))
     }
 
@@ -172,6 +172,7 @@ impl Debug for ParquetFormatFactory {
 #[derive(Debug, Default)]
 pub struct ParquetFormat {
     options: TableParquetOptions,
+    extensions: Extensions,
 }
 
 impl ParquetFormat {
@@ -233,6 +234,12 @@ impl ParquetFormat {
     /// Parquet options
     pub fn options(&self) -> &TableParquetOptions {
         &self.options
+    }
+
+    /// Set Table extensions that may be used by the format
+    pub fn with_extensions(mut self, extensions: Extensions) -> Self {
+        self.extensions = extensions;
+        self
     }
 
     /// Return `true` if should use view types.
@@ -308,9 +315,10 @@ async fn fetch_schema_with_location(
     file: &ObjectMeta,
     metadata_size_hint: Option<usize>,
     coerce_int96: Option<TimeUnit>,
+    extensions: &Extensions,
 ) -> Result<(Path, Schema)> {
     let file_decryption_properties =
-        get_file_decryption_properties(state, options, &file.location)?;
+        get_file_decryption_properties(state, options, &file.location, extensions)?;
     let loc_path = file.location.clone();
     let schema = fetch_schema(
         store,
@@ -327,6 +335,7 @@ fn get_file_decryption_properties(
     state: &dyn Session,
     options: &TableParquetOptions,
     file_path: &Path,
+    extensions: &Extensions,
 ) -> Result<Option<FileDecryptionProperties>> {
     let config_file_decryption_properties = &options.crypto.file_decryption;
     let file_decryption_properties: Option<FileDecryptionProperties> =
@@ -340,10 +349,7 @@ fn get_file_decryption_properties(
                     let factory = state
                         .runtime_env()
                         .parquet_encryption_factory(&factory_id)?;
-                    factory.get_file_decryption_properties(
-                        &options.crypto.factory_options.options,
-                        file_path,
-                    )?
+                    factory.get_file_decryption_properties(extensions, file_path)?
                 }
                 None => None,
             },
@@ -391,6 +397,7 @@ impl FileFormat for ParquetFormat {
                     object,
                     self.metadata_size_hint(),
                     coerce_int96,
+                    &self.extensions,
                 )
             })
             .boxed() // Workaround https://github.com/rust-lang/rust/issues/64552
@@ -440,7 +447,7 @@ impl FileFormat for ParquetFormat {
         object: &ObjectMeta,
     ) -> Result<Statistics> {
         let file_decryption_properties =
-            get_file_decryption_properties(state, &self.options, &object.location)?;
+            get_file_decryption_properties(state, &self.options, &object.location, &self.extensions)?;
         let stats = fetch_statistics(
             store.as_ref(),
             table_schema,
@@ -463,18 +470,19 @@ impl FileFormat for ParquetFormat {
             metadata_size_hint = Some(metadata);
         }
 
-        let mut source = ParquetSource::new(self.options.clone());
+        // TODO: Allow using extensions from state if not set in format?
+        let mut source = ParquetSource::new(self.options.clone())
+            .with_extensions(self.extensions.clone());
 
         if let Some(metadata_size_hint) = metadata_size_hint {
             source = source.with_metadata_size_hint(metadata_size_hint)
         }
 
         if let Some(encryption_factory_id) = &self.options.crypto.factory_id {
-            source = source.with_encryption_factory(
-                state
+            let factory = state
                     .runtime_env()
-                    .parquet_encryption_factory(&encryption_factory_id)?,
-            );
+                    .parquet_encryption_factory(&encryption_factory_id)?;
+            source = source.with_encryption_factory(factory);
         }
 
         // Apply schema adapter factory before building the new config
@@ -489,7 +497,7 @@ impl FileFormat for ParquetFormat {
     async fn create_writer_physical_plan(
         &self,
         input: Arc<dyn ExecutionPlan>,
-        _state: &dyn Session,
+        state: &dyn Session,
         conf: FileSinkConfig,
         order_requirements: Option<LexRequirement>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
@@ -497,7 +505,7 @@ impl FileFormat for ParquetFormat {
             return not_impl_err!("Overwrites are not implemented yet for Parquet");
         }
 
-        let sink = Arc::new(ParquetSink::new(conf, self.options.clone()));
+        let sink = Arc::new(ParquetSink::new(conf, self.options.clone()).with_extensions(state.table_options().extensions.clone()));
 
         Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)) as _)
     }
@@ -1216,6 +1224,8 @@ pub struct ParquetSink {
     /// File metadata from successfully produced parquet files. The Mutex is only used
     /// to allow inserting to HashMap from behind borrowed reference in DataSink::write_all.
     written: Arc<parking_lot::Mutex<HashMap<Path, FileMetaData>>>,
+    // Table extensions, which might be required for the encryption factory
+    extensions: Extensions,
 }
 
 impl Debug for ParquetSink {
@@ -1247,7 +1257,13 @@ impl ParquetSink {
             config,
             parquet_options,
             written: Default::default(),
+            extensions: Default::default(),
         }
+    }
+
+    pub fn with_extensions(mut self, extensions: Extensions) -> Self {
+        self.extensions = extensions;
+        self
     }
 
     /// Retrieve the file metadata for the written files, keyed to the path
@@ -1285,7 +1301,7 @@ impl ParquetSink {
                 runtime.parquet_encryption_factory(encryption_factory_id)?;
             let file_encryption_properties = encryption_factory
                 .get_file_encryption_properties(
-                    &parquet_opts.crypto.factory_options.options,
+                    &self.extensions,
                     schema,
                     path,
                 )?;

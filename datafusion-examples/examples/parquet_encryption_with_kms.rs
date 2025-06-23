@@ -17,8 +17,8 @@
 
 use arrow::array::{ArrayRef, Int32Array, RecordBatch, StringArray};
 use arrow_schema::SchemaRef;
-use datafusion::common::DataFusionError;
-use datafusion::config::TableParquetOptions;
+use datafusion::common::{extensions_options, DataFusionError};
+use datafusion::config::{ConfigExtension, Extensions, TableParquetOptions};
 use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::ListingOptions;
@@ -34,7 +34,6 @@ use parquet_key_management::crypto_factory::{
 };
 use parquet_key_management::kms::KmsConnectionConfig;
 use parquet_key_management::test_kms::TestKmsClientFactory;
-use std::collections::HashMap;
 use std::fmt::Formatter;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -59,9 +58,10 @@ async fn main() -> Result<()> {
     // In future it could be possible to have built-in implementations in DataFusion.
     let crypto_factory = CryptoFactory::new(TestKmsClientFactory::with_default_keys());
     let encryption_factory = KmsEncryptionFactory { crypto_factory };
-    ctx.register_parquet_encryption_factory(
+    ctx.register_parquet_encryption_factory_with_config(
         ENCRYPTION_FACTORY_ID,
         Arc::new(encryption_factory),
+        EncryptionConfig::default(),
     );
 
     // Register some simple test data
@@ -70,13 +70,13 @@ async fn main() -> Result<()> {
     let batch = RecordBatch::try_from_iter(vec![("a", a), ("b", b)])?;
     ctx.register_batch("test_data", batch)?;
 
-    {
-        // Write and read with the programmatic API
-        let tmpdir = TempDir::new()?;
-        write_encrypted(&ctx, &tmpdir).await?;
-        let file_path = std::fs::read_dir(&tmpdir)?.next().unwrap()?.path();
-        read_encrypted(&ctx, &file_path).await?;
-    }
+    //{
+    //    // Write and read with the programmatic API
+    //    let tmpdir = TempDir::new()?;
+    //    write_encrypted(&ctx, &tmpdir).await?;
+    //    let file_path = std::fs::read_dir(&tmpdir)?.next().unwrap()?.path();
+    //    read_encrypted(&ctx, &file_path).await?;
+    //}
 
     {
         // Write and read with the SQL API
@@ -91,8 +91,6 @@ async fn main() -> Result<()> {
 
 /// Write an encrypted Parquet file
 async fn write_encrypted(ctx: &SessionContext, tmpdir: &TempDir) -> Result<()> {
-    let df = ctx.table("test_data").await?;
-
     let mut parquet_options = TableParquetOptions::new();
     // We specify that we want to use Parquet encryption by setting the identifier of the
     // encryption factory to use.
@@ -100,8 +98,14 @@ async fn write_encrypted(ctx: &SessionContext, tmpdir: &TempDir) -> Result<()> {
     // Our encryption factory requires specifying the master key identifier to
     // use for encryption. To support arbitrary configuration options for different encryption factories,
     // DataFusion could use a HashMap<String, String> field for encryption options.
-    let encryption_config = EncryptionConfig::new("kf".to_owned());
-    parquet_options.crypto.factory_options.options = encryption_config.to_config_map();
+    let mut encryption_config = EncryptionConfig::default();
+    encryption_config.footer_key_id = "kf".to_owned();
+
+    // Overwrite default config extensions
+    // TODO: This is bad, we should be able to specify this in a way that's specific to the output format
+    ctx.register_table_options_extension(encryption_config);
+
+    let df = ctx.table("test_data").await?;
 
     df.write_parquet(
         tmpdir.path().to_str().unwrap(),
@@ -122,7 +126,13 @@ async fn read_encrypted(ctx: &SessionContext, file_path: &std::path::Path) -> Re
     // as key identifiers are stored in the key metadata.
     parquet_options.crypto.factory_id = Some(ENCRYPTION_FACTORY_ID.to_owned());
 
-    let file_format = ParquetFormat::default().with_options(parquet_options);
+    let mut encryption_config = EncryptionConfig::default();
+    encryption_config.test_setting = "hello".to_string();
+    let mut extensions = Extensions::default();
+    extensions.insert(encryption_config);
+
+    let mut file_format = ParquetFormat::default().with_options(parquet_options);
+    file_format = file_format.with_extensions(extensions);
     let listing_options = ListingOptions::new(Arc::new(file_format));
 
     let table_path = format!("file://{}", file_path.to_str().unwrap());
@@ -158,7 +168,7 @@ async fn write_encrypted_with_sql(ctx: &SessionContext, tmpdir: &TempDir) -> Res
         STORED AS parquet
         OPTIONS (\
             'format.crypto.factory_id' '{ENCRYPTION_FACTORY_ID}', \
-            'format.crypto.factory_options.footer_key_id' 'kf' \
+            'kms.footer_key_id' 'kf' \
         )"
     );
     let _ = ctx.sql(&query).await?.collect().await?;
@@ -176,7 +186,8 @@ async fn read_encrypted_with_sql(
     let ddl = format!(
         "CREATE EXTERNAL TABLE encrypted_parquet_table_2 \
         STORED AS PARQUET LOCATION '{file_path}' OPTIONS (\
-        'format.crypto.factory_id' '{ENCRYPTION_FACTORY_ID}' \
+            'format.crypto.factory_id' '{ENCRYPTION_FACTORY_ID}', \
+            'kms.test_setting' 'hello' \
         )"
     );
     ctx.sql(&ddl).await?;
@@ -193,20 +204,15 @@ async fn read_encrypted_with_sql(
 }
 
 // Options used to configure our example encryption factory
-struct EncryptionConfig {
-    pub footer_key_id: String,
+extensions_options! {
+    struct EncryptionConfig {
+        pub footer_key_id: String, default = "".to_string()
+        pub test_setting: String, default = "".to_string()
+    }
 }
 
-impl EncryptionConfig {
-    pub fn new(footer_key_id: String) -> Self {
-        Self { footer_key_id }
-    }
-
-    pub fn to_config_map(self) -> HashMap<String, String> {
-        let mut config = HashMap::new();
-        config.insert("footer_key_id".to_string(), self.footer_key_id);
-        config
-    }
+impl ConfigExtension for EncryptionConfig {
+     const PREFIX: &'static str = "kms";
 }
 
 /// Wrapper type around `CryptoFactory` to allow implementing the `EncryptionFactory` trait
@@ -231,18 +237,26 @@ impl EncryptionFactory for KmsEncryptionFactory {
     /// stored in a JSON file alongside Parquet files).
     fn get_file_encryption_properties(
         &self,
-        config: &HashMap<String, String>,
+        extensions: &Extensions,
         _schema: &SchemaRef,
         _file_path: &Path,
     ) -> Result<Option<FileEncryptionProperties>> {
-        let footer_key_id = config.get("footer_key_id").cloned().ok_or_else(|| {
+        let options = extensions.get::<EncryptionConfig>();
+        let options = options.ok_or_else(|| {
             DataFusionError::Configuration(
-                "Footer key id for encryption is not set".to_owned(),
+                "KMS encryption options not set".to_owned(),
             )
         })?;
+        if options.footer_key_id.is_empty() {
+            return Err(
+                DataFusionError::Configuration(
+                    "Footer key id not set".to_owned(),
+                )
+            );
+        }
         // We could configure per-column keys using the provided schema,
         // but for simplicity this example uses uniform encryption.
-        let config = EncryptionConfiguration::builder(footer_key_id).build()?;
+        let config = EncryptionConfiguration::builder(options.footer_key_id.clone()).build()?;
         // Similarly, the KMS connection could be configured from the options if needed, but this
         // example just uses the default options.
         let kms_config = Arc::new(KmsConnectionConfig::default());
@@ -256,9 +270,22 @@ impl EncryptionFactory for KmsEncryptionFactory {
     /// The `file_path` needs to be known to support encryption factories that use external key material.
     fn get_file_decryption_properties(
         &self,
-        _config: &HashMap<String, String>,
+        extensions: &Extensions,
         _file_path: &Path,
     ) -> Result<Option<FileDecryptionProperties>> {
+        let options = extensions.get::<EncryptionConfig>();
+        let options = options.ok_or_else(|| {
+            DataFusionError::Configuration(
+                "KMS encryption options not set".to_owned(),
+            )
+        })?;
+        if options.test_setting.is_empty() {
+            return Err(
+                DataFusionError::Configuration(
+                    "Couldn't get test setting when reading".to_owned(),
+                )
+            );
+        }
         let config = DecryptionConfiguration::builder().build();
         let kms_config = Arc::new(KmsConnectionConfig::default());
         Ok(Some(

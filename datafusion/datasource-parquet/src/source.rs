@@ -26,7 +26,7 @@ use crate::opener::ParquetOpener;
 use crate::row_filter::can_expr_be_pushed_down_with_schemas;
 use crate::DefaultParquetFileReaderFactory;
 use crate::ParquetFileReaderFactory;
-use datafusion_common::config::ConfigOptions;
+use datafusion_common::config::{ConfigOptions, Extensions};
 use datafusion_datasource::as_file_source;
 use datafusion_datasource::file_stream::FileOpener;
 use datafusion_datasource::schema_adapter::{
@@ -279,6 +279,7 @@ pub struct ParquetSource {
     pub(crate) metadata_size_hint: Option<usize>,
     pub(crate) projected_statistics: Option<Statistics>,
     pub(crate) encryption_factory: Option<Arc<dyn EncryptionFactory>>,
+    pub(crate) table_extensions: Option<Extensions>,
 }
 
 impl ParquetSource {
@@ -323,6 +324,11 @@ impl ParquetSource {
         encryption_factory: Arc<dyn EncryptionFactory>,
     ) -> Self {
         self.encryption_factory = Some(encryption_factory);
+        self
+    }
+
+    pub fn with_extensions(mut self, extensions: Extensions) -> Self {
+        self.table_extensions = Some(extensions);
         self
     }
 
@@ -521,12 +527,7 @@ impl FileSource for ParquetSource {
             coerce_int96,
             file_decryption_properties,
             encryption_factory: self.encryption_factory.clone(),
-            encryption_factory_config: self
-                .table_parquet_options
-                .crypto
-                .factory_options
-                .options
-                .clone(),
+            extensions: self.table_extensions.clone().unwrap_or_default(),
         })
     }
 

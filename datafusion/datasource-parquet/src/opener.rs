@@ -17,7 +17,6 @@
 
 //! [`ParquetOpener`] for opening Parquet files
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::page_filter::PagePruningAccessPlanFilter;
@@ -45,6 +44,7 @@ use parquet::arrow::async_reader::AsyncFileReader;
 use parquet::arrow::{ParquetRecordBatchStreamBuilder, ProjectionMask};
 use parquet::encryption::decrypt::FileDecryptionProperties;
 use parquet::file::metadata::ParquetMetaDataReader;
+use datafusion_common::config::Extensions;
 
 /// Implements [`FileOpener`] for a parquet file
 pub(super) struct ParquetOpener {
@@ -89,8 +89,8 @@ pub(super) struct ParquetOpener {
     pub file_decryption_properties: Option<Arc<FileDecryptionProperties>>,
     /// Optional factory to create file decryption properties dynamically
     pub encryption_factory: Option<Arc<dyn EncryptionFactory>>,
-    /// Configuration options for the encryption factory
-    pub encryption_factory_config: HashMap<String, String>,
+    /// Extension options
+    pub extensions: Extensions,
 }
 
 impl FileOpener for ParquetOpener {
@@ -141,7 +141,7 @@ impl FileOpener for ParquetOpener {
             if file_decryption_properties.is_none() {
                 file_decryption_properties = encryption_factory
                     .get_file_decryption_properties(
-                        &self.encryption_factory_config,
+                        &self.extensions,
                         &file_location,
                     )?
                     .map(|props| Arc::new(props));

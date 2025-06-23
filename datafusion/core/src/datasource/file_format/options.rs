@@ -591,7 +591,7 @@ impl ReadOptions<'_> for ParquetReadOptions<'_> {
         if let Some(file_decryption_properties) = &self.file_decryption_properties {
             options.crypto.file_decryption = Some(file_decryption_properties.into());
         }
-        let mut file_format = ParquetFormat::new().with_options(options);
+        let mut file_format = ParquetFormat::new().with_options(options).with_extensions(table_options.extensions);
 
         if let Some(parquet_pruning) = self.parquet_pruning {
             file_format = file_format.with_enable_pruning(parquet_pruning)

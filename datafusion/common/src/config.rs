@@ -614,9 +614,6 @@ config_namespace! {
         /// Encryption factories can be registered in a session with
         /// [`SessionConfig::register_parquet_encryption_factory`].
         pub factory_id: Option<String>, default = None
-
-        /// Any encryption factory specific options
-        pub factory_options: EncryptionFactoryOptions, default = EncryptionFactoryOptions::default()
     }
 }
 
@@ -1645,7 +1642,10 @@ impl TableOptions {
         let Some(e) = self.extensions.0.get_mut(prefix) else {
             return _config_err!("Could not find config namespace \"{prefix}\"");
         };
-        e.0.set(key, value)
+        // Need to slice key for this to work with the extensions_options macro.
+        // Looks like existing implementations (eg. AwsOptions) have worked around this by not
+        // using the macro and implementing set themselves :(
+        e.0.set(&key[prefix.len() + 1..], value)
     }
 
     /// Initializes a new `TableOptions` from a hash map of string settings.

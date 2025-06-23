@@ -4,8 +4,8 @@ use datafusion_common::DataFusionError;
 use object_store::path::Path;
 use parquet::encryption::decrypt::FileDecryptionProperties;
 use parquet::encryption::encrypt::FileEncryptionProperties;
-use std::collections::HashMap;
 use std::sync::Arc;
+use datafusion_common::config::Extensions;
 
 /// Trait for types that generate file encryption and decryption properties to
 /// write and read encrypted Parquet files.
@@ -15,7 +15,7 @@ pub trait EncryptionFactory: Send + Sync + std::fmt::Debug + 'static {
     /// Generate file encryption properties to use when writing a Parquet file.
     fn get_file_encryption_properties(
         &self,
-        config: &HashMap<String, String>,
+        extensions: &Extensions,
         schema: &SchemaRef,
         file_path: &Path,
     ) -> datafusion_common::Result<Option<FileEncryptionProperties>>;
@@ -23,7 +23,7 @@ pub trait EncryptionFactory: Send + Sync + std::fmt::Debug + 'static {
     /// Generate file decryption properties to use when reading a Parquet file.
     fn get_file_decryption_properties(
         &self,
-        config: &HashMap<String, String>,
+        extensions: &Extensions,
         file_path: &Path,
     ) -> datafusion_common::Result<Option<FileDecryptionProperties>>;
 }
@@ -48,7 +48,7 @@ impl EncryptionFactoryRegistry {
     ) -> datafusion_common::Result<Arc<dyn EncryptionFactory>> {
         self.factories
             .get(id)
-            .map(|f| Arc::clone(f.value()))
+            .map(|f| f.clone())
             .ok_or_else(|| {
                 DataFusionError::Internal(format!(
                     "No Parquet encryption factory found for id '{id}'"

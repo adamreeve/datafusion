@@ -24,6 +24,7 @@ use datafusion_datasource_parquet::plan_to_parquet;
 use datafusion_common::TableReference;
 use datafusion_execution::parquet::EncryptionFactory;
 use parquet::file::properties::WriterProperties;
+use datafusion_common::config::ConfigExtension;
 
 impl SessionContext {
     /// Creates a [`DataFrame`] for reading a Parquet data source.
@@ -105,6 +106,20 @@ impl SessionContext {
         id: &str,
         encryption_factory: Arc<dyn EncryptionFactory>,
     ) -> Option<Arc<dyn EncryptionFactory>> {
+        self.runtime_env()
+            .register_parquet_encryption_factory(id, encryption_factory)
+    }
+
+    /// Registers a Parquet [`EncryptionFactory`](crate::datasource::physical_plan::parquet::encryption::EncryptionFactory)
+    /// with an associated unique identifier and default configuration options.
+    /// If an encryption factory with the same identifier was already registered, it is replaced and returned.
+    pub fn register_parquet_encryption_factory_with_config<T: ConfigExtension>(
+        &self,
+        id: &str,
+        encryption_factory: Arc<dyn EncryptionFactory>,
+        options: T,
+    ) -> Option<Arc<dyn EncryptionFactory>> {
+        self.register_table_options_extension(options);
         self.runtime_env()
             .register_parquet_encryption_factory(id, encryption_factory)
     }
