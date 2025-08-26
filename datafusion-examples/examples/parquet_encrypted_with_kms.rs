@@ -292,12 +292,45 @@ impl KeyRetriever for TestKeyRetriever {
         &self,
         key_metadata: &[u8],
     ) -> datafusion::parquet::errors::Result<Vec<u8>> {
-        let _result = reqwest::blocking::get("https://google.com").map_err(|e| {
+        // "Cannot drop a runtime in a context where blocking is not allowed":
+        //let _result = reqwest::blocking::get("https://google.com").map_err(|e| {
+        //    datafusion::parquet::errors::ParquetError::General(format!(
+        //        "Failed to make request: {}",
+        //        e
+        //    ))
+        //})?;
+
+        let rt = tokio::runtime::Handle::try_current().map_err(|e| {
             datafusion::parquet::errors::ParquetError::General(format!(
-                "Failed to make request: {}",
+                "Could not get the current Tokio runtime: {}",
                 e
             ))
         })?;
+
+        // "Cannot start a runtime from within a runtime":
+        //let _res = rt.block_on(async {
+        //    rt.spawn_blocking(|| {
+        //        reqwest::blocking::get("https://google.com")
+        //    }).await
+        //}).unwrap().unwrap();
+
+        // "Cannot start a runtime from within a runtime":
+        //let _res = rt.block_on(async {
+        //    println!("hello")
+        //});
+
+        // Works:
+        //let h = rt.spawn(async {
+        //    reqwest::get("https://google.com").await
+        //});
+        //let _resp = futures::executor::block_on(h).unwrap().unwrap();
+
+        // Works:
+        let h = rt.spawn_blocking(|| {
+            reqwest::blocking::get("https://google.com")
+        });
+        let _resp = futures::executor::block_on(h).unwrap().unwrap();
+
         let key_metadata = std::str::from_utf8(key_metadata)?;
         let key = base64::prelude::BASE64_STANDARD
             .decode(key_metadata)
