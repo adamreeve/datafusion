@@ -300,12 +300,12 @@ impl KeyRetriever for TestKeyRetriever {
         //    ))
         //})?;
 
-        let rt = tokio::runtime::Handle::try_current().map_err(|e| {
-            datafusion::parquet::errors::ParquetError::General(format!(
-                "Could not get the current Tokio runtime: {}",
-                e
-            ))
-        })?;
+        //let rt = tokio::runtime::Handle::try_current().map_err(|e| {
+        //    datafusion::parquet::errors::ParquetError::General(format!(
+        //        "Could not get the current Tokio runtime: {}",
+        //        e
+        //    ))
+        //})?;
 
         // "Cannot start a runtime from within a runtime":
         //let _res = rt.block_on(async {
@@ -326,10 +326,15 @@ impl KeyRetriever for TestKeyRetriever {
         //let _resp = futures::executor::block_on(h).unwrap().unwrap();
 
         // Works:
-        let h = rt.spawn_blocking(|| {
+        //let h = rt.spawn_blocking(|| {
+        //    reqwest::blocking::get("https://google.com")
+        //});
+        //let _resp = futures::executor::block_on(h).unwrap().unwrap();
+
+        // Works but not allowed with current_thread runtime:
+        let _resp = tokio::task::block_in_place(|| {
             reqwest::blocking::get("https://google.com")
-        });
-        let _resp = futures::executor::block_on(h).unwrap().unwrap();
+        }).unwrap();
 
         let key_metadata = std::str::from_utf8(key_metadata)?;
         let key = base64::prelude::BASE64_STANDARD
