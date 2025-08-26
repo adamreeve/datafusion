@@ -292,6 +292,12 @@ impl KeyRetriever for TestKeyRetriever {
         &self,
         key_metadata: &[u8],
     ) -> datafusion::parquet::errors::Result<Vec<u8>> {
+        let _result = reqwest::blocking::get("https://google.com").map_err(|e| {
+            datafusion::parquet::errors::ParquetError::General(format!(
+                "Failed to make request: {}",
+                e
+            ))
+        })?;
         let key_metadata = std::str::from_utf8(key_metadata)?;
         let key = base64::prelude::BASE64_STANDARD
             .decode(key_metadata)
