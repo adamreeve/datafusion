@@ -313,7 +313,7 @@ async fn fetch_schema_with_location(
     coerce_int96: Option<TimeUnit>,
 ) -> Result<(Path, Schema)> {
     let file_decryption_properties =
-        get_file_decryption_properties(state, options, &file.location)?;
+        get_file_decryption_properties(state, options, &file.location).await?;
     let loc_path = file.location.clone();
     let schema = fetch_schema(
         store,
@@ -327,7 +327,7 @@ async fn fetch_schema_with_location(
 }
 
 #[cfg(feature = "parquet_encryption")]
-fn get_file_decryption_properties(
+async fn get_file_decryption_properties(
     state: &dyn Session,
     options: &TableParquetOptions,
     file_path: &Path,
@@ -339,10 +339,12 @@ fn get_file_decryption_properties(
                 Some(factory_id) => {
                     let factory =
                         state.runtime_env().parquet_encryption_factory(factory_id)?;
-                    factory.get_file_decryption_properties(
-                        &options.crypto.factory_options,
-                        file_path,
-                    )?
+                    factory
+                        .get_file_decryption_properties(
+                            &options.crypto.factory_options,
+                            file_path,
+                        )
+                        .await?
                 }
                 None => None,
             },
@@ -351,7 +353,7 @@ fn get_file_decryption_properties(
 }
 
 #[cfg(not(feature = "parquet_encryption"))]
-fn get_file_decryption_properties(
+async fn get_file_decryption_properties(
     _state: &dyn Session,
     _options: &TableParquetOptions,
     _file_path: &Path,
@@ -453,7 +455,7 @@ impl FileFormat for ParquetFormat {
         object: &ObjectMeta,
     ) -> Result<Statistics> {
         let file_decryption_properties =
-            get_file_decryption_properties(state, &self.options, &object.location)?;
+            get_file_decryption_properties(state, &self.options, &object.location).await?;
         let stats = fetch_statistics(
             store.as_ref(),
             table_schema,
@@ -1303,7 +1305,7 @@ impl ParquetSink {
 
     /// Create writer properties based upon configuration settings,
     /// including partitioning and the inclusion of arrow schema metadata.
-    fn create_writer_props(
+    async fn create_writer_props(
         &self,
         runtime: &Arc<RuntimeEnv>,
         path: &Path,
@@ -1331,7 +1333,8 @@ impl ParquetSink {
             &parquet_opts,
             schema,
             path,
-        )?;
+        )
+        .await?;
         Ok(builder.build())
     }
 
@@ -1372,7 +1375,7 @@ impl ParquetSink {
 }
 
 #[cfg(feature = "parquet_encryption")]
-fn set_writer_encryption_properties(
+async fn set_writer_encryption_properties(
     builder: WriterPropertiesBuilder,
     runtime: &Arc<RuntimeEnv>,
     parquet_opts: &TableParquetOptions,
@@ -1392,7 +1395,8 @@ fn set_writer_encryption_properties(
                 &parquet_opts.crypto.factory_options,
                 schema,
                 path,
-            )?;
+            )
+            .await?;
         if let Some(file_encryption_properties) = file_encryption_properties {
             return Ok(
                 builder.with_file_encryption_properties(file_encryption_properties)
@@ -1403,7 +1407,7 @@ fn set_writer_encryption_properties(
 }
 
 #[cfg(not(feature = "parquet_encryption"))]
-fn set_writer_encryption_properties(
+async fn set_writer_encryption_properties(
     builder: WriterPropertiesBuilder,
     _runtime: &Arc<RuntimeEnv>,
     _parquet_opts: &TableParquetOptions,
@@ -1453,7 +1457,7 @@ impl FileSink for ParquetSink {
         };
 
         while let Some((path, mut rx)) = file_stream_rx.recv().await {
-            let parquet_props = self.create_writer_props(&runtime, &path)?;
+            let parquet_props = self.create_writer_props(&runtime, &path).await?;
             if !allow_single_file_parallelism {
                 let mut writer = self
                     .create_async_arrow_writer(
