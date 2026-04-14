@@ -2790,8 +2790,18 @@ impl From<ConfigFileDecryptionProperties> for FileDecryptionProperties {
 }
 
 #[cfg(feature = "parquet_encryption")]
-impl From<&Arc<FileDecryptionProperties>> for ConfigFileDecryptionProperties {
-    fn from(f: &Arc<FileDecryptionProperties>) -> Self {
+impl TryFrom<&Arc<FileDecryptionProperties>> for ConfigFileDecryptionProperties {
+    type Error = DataFusionError;
+
+    fn try_from(f: &Arc<FileDecryptionProperties>) -> Result<Self> {
+        let footer_key = f.footer_key(None).map_err(|e| {
+            DataFusionError::Configuration(format!(
+                "Could not retrieve footer key from FileDecryptionProperties. \
+                Note that conversion to ConfigFileDecryptionProperties is not supported \
+                when using a key retriever: {e}"
+            ))
+        })?;
+
         let (column_names_vec, column_keys_vec) = f.column_keys();
         let mut column_decryption_properties: HashMap<
             String,
@@ -2804,18 +2814,13 @@ impl From<&Arc<FileDecryptionProperties>> for ConfigFileDecryptionProperties {
             column_decryption_properties.insert(column_name.clone(), props);
         }
 
-        let mut aad_prefix: Vec<u8> = Vec::new();
-        if let Some(prefix) = f.aad_prefix() {
-            aad_prefix = prefix.clone();
-        }
-        ConfigFileDecryptionProperties {
-            footer_key_as_hex: hex::encode(
-                f.footer_key(None).unwrap_or_default().as_ref(),
-            ),
+        let aad_prefix = f.aad_prefix().cloned().unwrap_or_default();
+        Ok(ConfigFileDecryptionProperties {
+            footer_key_as_hex: hex::encode(footer_key.as_ref()),
             column_decryption_properties,
             aad_prefix_as_hex: hex::encode(aad_prefix),
             footer_signature_verification: f.check_plaintext_footer_integrity(),
-        }
+        })
     }
 }
 
@@ -3272,7 +3277,8 @@ mod tests {
             Arc::new(FileEncryptionProperties::from(config_encrypt.clone()));
         assert_eq!(file_encryption_properties, encryption_properties_built);
 
-        let config_decrypt = ConfigFileDecryptionProperties::from(&decryption_properties);
+        let config_decrypt =
+            ConfigFileDecryptionProperties::try_from(&decryption_properties).unwrap();
         let decryption_properties_built =
             Arc::new(FileDecryptionProperties::from(config_decrypt.clone()));
         assert_eq!(decryption_properties, decryption_properties_built);
